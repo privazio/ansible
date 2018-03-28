@@ -201,7 +201,7 @@ def run_module():
 
     elif desired_state == 'disabled':
         if current_state == HOST_STATE_ABSENT:
-            module.fail_json('absent host cannot be place in disabled state')
+            module.fail_json(msg='absent host cannot be place in disabled state')
         elif current_state in [HOST_STATE_MONITORED, HOST_STATE_OFFLINE]:
             if one.host.status(host.ID, HOST_REQUEST_DISABLED):
                 result['changed'] = True
@@ -215,7 +215,7 @@ def run_module():
 
     elif desired_state == 'offline':
         if current_state == HOST_STATE_ABSENT:
-            module.fail_json('absent host cannot be place in offline state')
+            module.fail_json(msg='absent host cannot be place in offline state')
         elif current_state in [HOST_STATE_MONITORED, HOST_STATE_DISABLED]:
             if one.host.status(host.ID, HOST_REQUEST_OFFLINE):
                 result['changed'] = True
