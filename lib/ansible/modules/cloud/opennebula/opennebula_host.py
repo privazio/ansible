@@ -29,27 +29,27 @@ options:
         description:
             - The URL of the XMLRPC server.
               If not specified then the value of the PYONE_ENDPOINT environment variable, if any, is used.
-        default: http://127.0.0.1:2633/RPC2
     session:
         description:
             - Session string associated to the connected user.
-              It has to be formed with the contents of OpenNebula's ONE_AUTH file, which will be <username>:<password>
+              It has to be formed with the contents of OpenNebula's ONE_AUTH file, which is <username>:<password>
               with the default "core" auth driver.
               If not specified then the value of the PYONE_SESSION environment variable, if any, is used.
     state:
         description:
             - Takes the host to the desired lifecycle state.
-            - An absent has been deleted from the cluster.
-            - A present host has been allocated in the cluster (includes enabled, disabled and offline states).
-            - An enabled host is fully operational
-            - Disabled, e.g. to perform maintenance operations
-            - Offline, Host is totally offline
+            - If C(absent) the host will be deleted from the cluster.
+            - If C(present) the host will be created in the cluster (includes C(enabled), C(disabled) and C(offline) states).
+            - If C(enabled) the host is fully operational.
+            - C(disabled), e.g. to perform maintenance operations.
+            - C(offline), host is totally offline.
         choices:
             - absent
             - present
             - enabled
             - disabled
             - offline
+        default: present
     validate_certs:
         description:
             - Wheather to validate the SSL certificates or not.
@@ -76,9 +76,9 @@ author:
 '''
 
 EXAMPLES = '''
-#  Allocates a new host in OpenNebula
-- name:
+- name: Create a new host in OpenNebula
   opennebula_host:
+    endpoint: http://127.0.0.1:2633/RPC2
     name: host1
     cluster_id: 1
 '''
