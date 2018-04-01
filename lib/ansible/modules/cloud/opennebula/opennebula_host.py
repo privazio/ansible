@@ -99,21 +99,14 @@ from ansible.module_utils.basic import AnsibleModule
 
 # Host State Constants, for request change and reported
 
-HOST_REQUEST_ENABLED = 0
-HOST_REQUEST_DISABLED = 1
-HOST_REQUEST_OFFLINE = 2
+try:
+    from pyone import OneException, HOST_STATES, HOST_STATUS
+except ImportError:
+    OneException = Exception  #handled at module utils
 
-HOST_STATE_INIT = 0 # Initial state for enabled hosts
-HOST_STATE_MONITORING_MONITORED = 1 # Monitoring the host (from monitored)
-HOST_STATE_MONITORED = 2 # The host has been successfully monitored
-HOST_STATE_ERROR = 3 # An error ocurrer while monitoring the host
-HOST_STATE_DISABLED = 4 # The host is disabled
-HOST_STATE_MONITORING_ERROR = 5 # Monitoring the host (from error)
-HOST_STATE_MONITORING_INIT = 6 # Monitoring the host (from init)
-HOST_STATE_MONITORING_DISABLED  = 7 # Monitoring the host (from disabled)
-HOST_STATE_OFFLINE = 8 #The host is totally offline
 
-HOST_STATE_ABSENT = -99 # the host is absent (special case defined by this module)
+HOST_ABSENT = -99 # the host is absent (special case defined by this module)
+
 
 def get_host_by_name(one, name):
     hosts = one.hostpool.info()
@@ -122,6 +115,7 @@ def get_host_by_name(one, name):
             return h
     return None
 
+
 def allocate_host(one, module, result):
     if not one.host.allocate(module.params.get('name'), module.params.get('vmm_mad_name'), module.params.get('im_mad_name'), module.params.get('cluster_id')):
         module.fail_json(msg="could not allocate host")
@@ -129,13 +123,14 @@ def allocate_host(one, module, result):
         result['changed']= True
     return True
 
+
 def run_module():
     # define the available arguments/parameters that a user can pass to
     # the module
     module_args = OPENNEBULA_COMMON_ARGS
     module_args.update(dict(
         name=dict(type='str', required=True),
-        state=dict(choices=['present','absent','enabled','disabled','offline'], default='present'),
+        state=dict(choices=['present', 'absent', 'enabled', 'disabled', 'offline'], default='present'),
         im_mad_name=dict(type='str', default="kvm"),
         vmm_mad_name=dict(type='str', default="kvm"),
         cluster_id=dict(type='int', default=-1),
@@ -143,112 +138,107 @@ def run_module():
     ))
 
     # seed the result dict in the object
-    # we primarily care about changed and state
-    # change is if this module effectively modified the target
-    # state will include any data that you want your module to pass back
-    # for consumption, for example, in a subsequent task
     result = dict(
         changed=False,
         original_message='',
         message=''
     )
 
-    # the AnsibleModule object will be our abstraction working with Ansible
-    # this includes instantiation, a couple of common attr would be the
-    # args/params passed to the execution, as well as if the module
-    # supports check mode
+    # the AnsibleModule object
     module = AnsibleModule(
         argument_spec=module_args,
         supports_check_mode=False
     )
 
-    #Create the opennebula XMLRPC client
-    one = create_one_server(module)
+    try:
 
+        # Create the opennebula XMLRPC client
+        one = create_one_server(module)
 
-    #Get the list of hots
-    host_name = module.params.get("name")
-    host = get_host_by_name(one, host_name)
+        # Get the list of hots
+        host_name = module.params.get("name")
+        host = get_host_by_name(one, host_name)
 
-    # manage state
-    desired_state = module.params.get('state')
-    if bool(host):
-        current_state = host.STATE
-    else:
-        current_state = HOST_STATE_ABSENT
-
-    # apply properties
-
-    if desired_state == 'present':
-        if current_state == HOST_STATE_ABSENT:
-            allocate_host(one, module, result)
-            host = get_host_by_name(one, host_name)
-
-    elif desired_state == 'enabled':
-        if current_state == HOST_STATE_ABSENT:
-            allocate_host(one, module, result)
-            host = get_host_by_name(one, host_name)
-        elif current_state in [HOST_STATE_DISABLED, HOST_STATE_OFFLINE]:
-            if one.host.status(host.ID, HOST_REQUEST_ENABLED):
-                result['changed'] = True
-            else:
-                module.fail_json(msg="could not disable host")
-        elif current_state in [HOST_STATE_MONITORED]:
-            pass
+        # manage host state
+        desired_state = module.params.get('state')
+        if bool(host):
+            current_state = host.STATE
+            current_state_name = HOST_STATES(host.STATE).name
         else:
-            module.fail_json(msg="unknown host state, cowardly refusing to change state to enabled")
+            current_state = HOST_ABSENT
+            current_state_name = "ABSENT"
 
+        # apply properties
 
-    elif desired_state == 'disabled':
-        if current_state == HOST_STATE_ABSENT:
-            module.fail_json(msg='absent host cannot be place in disabled state')
-        elif current_state in [HOST_STATE_MONITORED, HOST_STATE_OFFLINE]:
-            if one.host.status(host.ID, HOST_REQUEST_DISABLED):
-                result['changed'] = True
+        if desired_state == 'present':
+            if current_state == HOST_ABSENT:
+                allocate_host(one, module, result)
+                host = get_host_by_name(one, host_name)
+
+        elif desired_state == 'enabled':
+            if current_state == HOST_ABSENT:
+                allocate_host(one, module, result)
+                host = get_host_by_name(one, host_name)
+            elif current_state in [HOST_STATES.DISABLED, HOST_STATES.OFFLINE]:
+                if one.host.status(host.ID, HOST_STATUS.ENABLED):
+                    result['changed'] = True
+                else:
+                    module.fail_json(msg="could not disable host")
+            elif current_state in [HOST_STATES.MONITORED]:
+                pass
             else:
-                module.fail_json(msg="could not disable host")
-        elif current_state in [HOST_STATE_DISABLED]:
-            pass
-        else:
-            module.fail_json(msg="unknown host state, cowardly refusing to change state to disabled")
+                module.fail_json(msg="unknown host state %s, cowardly refusing to change state to enable" % current_state_name)
 
-
-    elif desired_state == 'offline':
-        if current_state == HOST_STATE_ABSENT:
-            module.fail_json(msg='absent host cannot be place in offline state')
-        elif current_state in [HOST_STATE_MONITORED, HOST_STATE_DISABLED]:
-            if one.host.status(host.ID, HOST_REQUEST_OFFLINE):
-                result['changed'] = True
+        elif desired_state == 'disabled':
+            if current_state == HOST_ABSENT:
+                module.fail_json(msg='absent host cannot be put in disabled state')
+            elif current_state in [HOST_STATES.MONITORED, HOST_STATES.OFFLINE]:
+                if one.host.status(host.ID, HOST_STATUS.DISABLED):
+                    result['changed'] = True
+                else:
+                    module.fail_json(msg="could not disable host")
+            elif current_state in [HOST_STATES.DISABLED]:
+                pass
             else:
-                module.fail_json(msg="could not set host offline")
-        elif current_state in [HOST_REQUEST_OFFLINE]:
-            pass
-        else:
-            module.fail_json(msg="unknown host state, cowardly refusing to change state to offline")
+                module.fail_json(msg="unknown host state %s, cowardly refusing to change state to disable" % current_state_name)
 
-
-    elif desired_state == 'absent':
-        if current_state != HOST_STATE_ABSENT:
-            if one.host.delete(host.ID):
-                result['changed'] = True
+        elif desired_state == 'offline':
+            if current_state == HOST_ABSENT:
+                module.fail_json(msg='absent host cannot be place in offline state')
+            elif current_state in [HOST_STATES.MONITORED, HOST_STATES.DISABLED]:
+                if one.host.status(host.ID, HOST_STATUS.OFFLINE):
+                    result['changed'] = True
+                else:
+                    module.fail_json(msg="could not set host offline")
+            elif current_state in [HOST_STATES.OFFLINE]:
+                pass
             else:
-                module.fail_json(msg = "could not delete host from cluster")
+                module.fail_json(msg="unknown host state %s, cowardly refusing to change state to offline" % current_state_name)
 
-    # if we reach this point we can assume that the host was taken to the desired state
-    # manipulate or modify the template
+        elif desired_state == 'absent':
+            if current_state != HOST_ABSENT:
+                if one.host.delete(host.ID):
+                    result['changed'] = True
+                else:
+                    module.fail_json(msg="could not delete host from cluster")
 
-    desired_template_changes = module.params.get('template')
-    if desired_state != "offline" and bool(desired_template_changes):
-        if requires_template_update(host.TEMPLATE,desired_template_changes):
-            # setup the root element so that pytone will generate XML instead of attribute vector
-            desired_template_changes = { "TEMPLATE": desired_template_changes }
-            if one.host.update(host.ID, desired_template_changes, 1): # merge the template
-                result['changed'] = True
-            else:
-                module.fail_json(msg="failed to update the host template")
+        # if we reach this point we can assume that the host was taken to the desired state
+        # manipulate or modify the template
 
-    # return
-    module.exit_json(**result)
+        desired_template_changes = module.params.get('template')
+        if desired_state != "offline" and bool(desired_template_changes):
+            if requires_template_update(host.TEMPLATE, desired_template_changes):
+                # setup the root element so that pytone will generate XML instead of attribute vector
+                desired_template_changes = {"TEMPLATE": desired_template_changes}
+                if one.host.update(host.ID, desired_template_changes, 1):  # merge the template
+                    result['changed'] = True
+                else:
+                    module.fail_json(msg="failed to update the host template")
+
+        # return
+        module.exit_json(**result)
+    except OneException as e:
+        module.fail_json(msg="OpenNebula Exception: %s" % e)
 
 def main():
     run_module()
