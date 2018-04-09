@@ -4,11 +4,11 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 
-HAS_PYONE = True
-
 from os import environ
 from ssl import _create_unverified_context
 from six import string_types
+
+HAS_PYONE = True
 
 try:
     import pyone
@@ -21,11 +21,20 @@ OPENNEBULA_COMMON_ARGS = dict(
     validate_certs=dict(default=True, type='bool'),
 )
 
+
 def create_one_server(module):
+    """
+    Creates an XMLPRC client to OpenNebula.
+    Args:
+        module:
+
+    Returns:
+
+    """
     endpoint = module.params.get("endpoint", environ.get("PYONE_ENDPOINT",False))
     session = module.params.get("session", environ.get("PYONE_SESSION",False))
 
-    #Check if the module can run
+    # Check if the module can run
     if not HAS_PYONE:
         module.fail_json(msg="pyone is required for this module")
 
@@ -41,15 +50,72 @@ def create_one_server(module):
         return pyone.OneServer(endpoint,session)
 
 
+def get_host_by_name(one, name):
+    '''
+    Returns a host given its name.
+    Args:
+        one: the XMLRPC client object
+        name: the name of the host
+
+    Returns: the host object or None if the host is absent.
+
+    '''
+    hosts = one.hostpool.info()
+    for h in hosts.HOST:
+        if h.NAME == name:
+            return h
+    return None
+
+def get_cluster_by_name(one, name):
+    '''
+    Returns a cluster given its name.
+    Args:
+        one: the XMLRPC client object
+        name: the name of the cluster
+
+    Returns: the cluster object or None if the host is absent.
+
+    '''
+    clusters = one.clusterpool.info()
+    for c in clusters.CLUSTER:
+        if c.NAME == name:
+            return c
+    return None
 
 
-# TODO: check formally available data types in templates
-# OpenNebula handles all template types as strings
-# At some point there is a cast being performed on types provided by the user
-# This method mimics that data cast so that required template updates are detected properly
-# additionally an array will be converted to a comma separated list, which works for labels and hopefully for something else.
+def get_template_by_name(one, name):
+    '''
+    Returns a template given its name.
+    Args:
+        one: the XMLRPC client object
+        name: the name of the template
+
+    Returns: the template object or None if the host is absent.
+
+    '''
+    templates = one.templatepool.info()
+    for t in templates.TEMPLATE:
+        if t.NAME == name:
+            return t
+    return None
+
 
 def cast_template(template):
+    """
+    OpenNebula handles all template types as strings
+    At some point there is a cast being performed on types provided by the user
+    This function mimics that transformation so that required template updates are detected properly
+    additionally an array will be converted to a comma separated list,
+    which works for labels and hopefully for something more.
+
+    Args:
+        template: the template to transform
+
+    Returns: the transformed template with data casts applied.
+    """
+
+    # TODO: check formally available data types in templates
+
     for key in template:
         value = template[key]
         if isinstance(value, dict):
@@ -59,10 +125,22 @@ def cast_template(template):
         elif not isinstance(value, string_types):
             template[key] = str(value)
 
-# This method will help decide if a template update is required or not
-# If a desired key is missing from the current dictionary an update is required
-# If the intersection of both dictionaries is not deep equal, an update is required
+
 def requires_template_update(current, desired):
+    """
+    This function will help decide if a template update is required or not
+    If a desired key is missing from the current dictionary an update is required
+    If the intersection of both dictionaries is not deep equal, an update is required
+    Args:
+        current: current template as a dictionary
+        desired: desired template as a dictionary
+
+    Returns: True if a template update is required
+    """
+
+    if not desired:
+        return False
+
     cast_template(desired)
     intersection = dict()
     for dkey in desired.keys():
@@ -71,3 +149,26 @@ def requires_template_update(current, desired):
         else:
             return True
     return not (desired == intersection)
+
+
+def resolve_parameters(one, module):
+    '''
+    This function resolves parameters provided by a secondary ID to the primary ID.
+    For example if cluster_name is present, cluster_id will be introduced by performing
+    the required resolution
+    Args:
+        module: the module to get the parameters from
+
+    Returns: a copy of the paramters that includes the resolved parameters.
+
+    '''
+
+    resolved_params = dict(module.params)
+
+    if 'cluster_name' in module.params:
+        clusters = one.clusterpool.info()
+        for cluster in clusters.CLUSTER:
+            if cluster.NAME == module.params.get('cluster_name'):
+                resolved_params['cluster_id'] = cluster.ID
+
+    return resolved_params
