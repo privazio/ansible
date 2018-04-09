@@ -25,16 +25,6 @@ options:
         description:
             - Hostname of the machine to manage.
         required: true
-    endpoint:
-        description:
-            - The URL of the XMLRPC server.
-              If not specified then the value of the PYONE_ENDPOINT environment variable, if any, is used.
-    session:
-        description:
-            - Session string associated to the connected user.
-              It has to be formed with the contents of OpenNebula's ONE_AUTH file, which is <username>:<password>
-              with the default "core" auth driver.
-              If not specified then the value of the PYONE_SESSION environment variable, if any, is used.
     state:
         description:
             - Takes the host to the desired lifecycle state.
@@ -50,11 +40,6 @@ options:
             - disabled
             - offline
         default: present
-    validate_certs:
-        description:
-            - Wheather to validate the SSL certificates or not.
-              This parameter is ignored if PYTHONHTTPSVERIFY evironment variable is used.
-        default True
     im_mad_name:
         description:
             - The name of the information manager, this values are taken from the oned.conf with the tag name IM_MAD (name)
@@ -67,9 +52,14 @@ options:
         description:
             - The cluster ID. If it is -1, the default one will be used.
         default: -1
+    cluster_name:
+        description:
+            - The cluster specified by name.
+    template:
+        description:
+            - The template changes to merge into the host template.
 
-extends_documentation_fragment:
-    - opennebula
+extends_documentation_fragment: opennebula
 
 author:
     - Rafael del Valle (@rvalle)
@@ -78,23 +68,29 @@ author:
 EXAMPLES = '''
 - name: Create a new host in OpenNebula
   opennebula_host:
-    endpoint: http://127.0.0.1:2633/RPC2
     name: host1
     cluster_id: 1
+    endpoint: http://127.0.0.1:2633/RPC2
+
+- name: Create a host and adjust its template
+  opennebula_host:
+    name: host2
+    cluster_name: default
+    template:
+        LABELS:
+            - gold
+            - ssd
+        RESERVED_CPU: -100
 '''
 
+# TODO: what makes most sense to return?
 RETURN = '''
-original_message:
-    description: The original name param that was passed in
-    type: str
-message:
-    description: The output message that the sample module generates
 '''
 
 # TODO: Documentation on valid state transitions is required to properly implement all valid cases
 # TODO: To be coherent with CLI this module should also provide "flush" functionality
 
-from ansible.module_utils.opennebula import OPENNEBULA_COMMON_ARGS, create_one_server, requires_template_update
+from ansible.module_utils.opennebula import OPENNEBULA_COMMON_ARGS, create_one_server, get_host_by_name, requires_template_update, resolve_parameters
 from ansible.module_utils.basic import AnsibleModule
 
 # Host State Constants, for request change and reported
@@ -105,19 +101,11 @@ except ImportError:
     OneException = Exception  #handled at module utils
 
 
-HOST_ABSENT = -99 # the host is absent (special case defined by this module)
+HOST_ABSENT = -99  # the host is absent (special case defined by this module)
 
 
-def get_host_by_name(one, name):
-    hosts = one.hostpool.info()
-    for h in hosts.HOST:
-        if h.NAME == name:
-            return h
-    return None
-
-
-def allocate_host(one, module, result):
-    if not one.host.allocate(module.params.get('name'), module.params.get('vmm_mad_name'), module.params.get('im_mad_name'), module.params.get('cluster_id')):
+def allocate_host(one, module, resolved_params, result):
+    if not one.host.allocate(resolved_params.get('name'), resolved_params.get('vmm_mad_name'), resolved_params.get('im_mad_name'), resolved_params.get('cluster_id')):
         module.fail_json(msg="could not allocate host")
     else:
         result['changed']= True
@@ -134,6 +122,7 @@ def run_module():
         im_mad_name=dict(type='str', default="kvm"),
         vmm_mad_name=dict(type='str', default="kvm"),
         cluster_id=dict(type='int', default=-1),
+        cluster_name=dict(type='str'),
         template = dict(type='dict'),
     ))
 
@@ -147,7 +136,10 @@ def run_module():
     # the AnsibleModule object
     module = AnsibleModule(
         argument_spec=module_args,
-        supports_check_mode=False
+        supports_check_mode=False,
+        mutually_exclusive=[
+            ['cluster_id', 'cluster_name']
+        ]
     )
 
     try:
@@ -155,12 +147,15 @@ def run_module():
         # Create the opennebula XMLRPC client
         one = create_one_server(module)
 
+        # Resolve parameters using secondary IDs
+        resolved_params = resolve_parameters(one, module)
+
         # Get the list of hots
-        host_name = module.params.get("name")
+        host_name = resolved_params.get("name")
         host = get_host_by_name(one, host_name)
 
         # manage host state
-        desired_state = module.params.get('state')
+        desired_state = resolved_params.get('state')
         if bool(host):
             current_state = host.STATE
             current_state_name = HOST_STATES(host.STATE).name
@@ -169,21 +164,20 @@ def run_module():
             current_state_name = "ABSENT"
 
         # apply properties
-
         if desired_state == 'present':
             if current_state == HOST_ABSENT:
-                allocate_host(one, module, result)
+                allocate_host(one, module, resolved_params, result)
                 host = get_host_by_name(one, host_name)
 
         elif desired_state == 'enabled':
             if current_state == HOST_ABSENT:
-                allocate_host(one, module, result)
+                allocate_host(one, module, resolved_params, result)
                 host = get_host_by_name(one, host_name)
             elif current_state in [HOST_STATES.DISABLED, HOST_STATES.OFFLINE]:
                 if one.host.status(host.ID, HOST_STATUS.ENABLED):
                     result['changed'] = True
                 else:
-                    module.fail_json(msg="could not disable host")
+                    module.fail_json(msg="could not enable host")
             elif current_state in [HOST_STATES.MONITORED]:
                 pass
             else:
@@ -204,7 +198,7 @@ def run_module():
 
         elif desired_state == 'offline':
             if current_state == HOST_ABSENT:
-                module.fail_json(msg='absent host cannot be place in offline state')
+                module.fail_json(msg='absent host cannot be placed in offline state')
             elif current_state in [HOST_STATES.MONITORED, HOST_STATES.DISABLED]:
                 if one.host.status(host.ID, HOST_STATUS.OFFLINE):
                     result['changed'] = True
@@ -223,10 +217,11 @@ def run_module():
                     module.fail_json(msg="could not delete host from cluster")
 
         # if we reach this point we can assume that the host was taken to the desired state
-        # manipulate or modify the template
 
-        desired_template_changes = module.params.get('template')
-        if desired_state != "offline" and bool(desired_template_changes):
+        if desired_state != "offline":
+
+            # manipulate or modify the template
+            desired_template_changes = resolved_params.get('template')
             if requires_template_update(host.TEMPLATE, desired_template_changes):
                 # setup the root element so that pytone will generate XML instead of attribute vector
                 desired_template_changes = {"TEMPLATE": desired_template_changes}
@@ -234,6 +229,14 @@ def run_module():
                     result['changed'] = True
                 else:
                     module.fail_json(msg="failed to update the host template")
+
+            # the cluster
+            if host.CLUSTER_ID != resolved_params.get('cluster_id'):
+                if one.cluster.addhost(resolved_params.get('cluster_id'),host.ID):
+                    result['changed'] = True
+                else:
+                    module.fail_json(msg="failed to update the host cluster")
+
 
         # return
         module.exit_json(**result)
