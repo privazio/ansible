@@ -232,16 +232,16 @@ def run_module():
 
             # the cluster
             if host.CLUSTER_ID != resolved_params.get('cluster_id'):
-                if one.cluster.addhost(resolved_params.get('cluster_id'),host.ID):
+                if one.cluster.addhost(resolved_params.get('cluster_id'), host.ID):
                     result['changed'] = True
                 else:
                     module.fail_json(msg="failed to update the host cluster")
-
 
         # return
         module.exit_json(**result)
     except OneException as e:
         module.fail_json(msg="OpenNebula Exception: %s" % e)
+
 
 def main():
     run_module()
