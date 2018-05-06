@@ -11,11 +11,11 @@ ANSIBLE_METADATA = {
 
 DOCUMENTATION = '''
 ---
-module: opennebula_host
+module: one_host
 
 short_description: Manages OpenNebula Hosts
 
-version_added: "2.5"
+version_added: "2.6"
 
 description:
     - "Manages OpenNebula Hosts"
@@ -50,8 +50,8 @@ options:
         default: kvm
     cluster_id:
         description:
-            - The cluster ID. If it is -1, the default one will be used.
-        default: -1
+            - The cluster ID.
+        default: 0
     cluster_name:
         description:
             - The cluster specified by name.
@@ -67,13 +67,13 @@ author:
 
 EXAMPLES = '''
 - name: Create a new host in OpenNebula
-  opennebula_host:
+  one_host:
     name: host1
     cluster_id: 1
     endpoint: http://127.0.0.1:2633/RPC2
 
 - name: Create a host and adjust its template
-  opennebula_host:
+  one_host:
     name: host2
     cluster_name: default
     template:
@@ -90,7 +90,14 @@ RETURN = '''
 # TODO: Documentation on valid state transitions is required to properly implement all valid cases
 # TODO: To be coherent with CLI this module should also provide "flush" functionality
 
-from ansible.module_utils.opennebula import OPENNEBULA_COMMON_ARGS, create_one_server, get_host_by_name, requires_template_update, resolve_parameters
+from ansible.module_utils.opennebula import ( OPENNEBULA_COMMON_ARGS,
+                                              create_one_server,
+                                              close_one_server,
+                                              get_host_by_name,
+                                              requires_template_update,
+                                              resolve_parameters,
+                                              wait_for_state )
+
 from ansible.module_utils.basic import AnsibleModule
 
 # Host State Constants, for request change and reported
@@ -112,6 +119,12 @@ def allocate_host(one, module, resolved_params, result):
     return True
 
 
+def wait_for_host_state(module, one, host, target_states):
+    return wait_for_state(module, 'host', lambda: one.host.info(host.ID).STATE,
+                          lambda s: HOST_STATES(s).name, target_states,
+                          invalid_states=[HOST_STATES.ERROR, HOST_STATES.MONITORING_ERROR])
+
+
 def run_module():
     # define the available arguments/parameters that a user can pass to
     # the module
@@ -121,7 +134,7 @@ def run_module():
         state=dict(choices=['present', 'absent', 'enabled', 'disabled', 'offline'], default='present'),
         im_mad_name=dict(type='str', default="kvm"),
         vmm_mad_name=dict(type='str', default="kvm"),
-        cluster_id=dict(type='int', default=-1),
+        cluster_id=dict(type='int', default=0),
         cluster_name=dict(type='str'),
         template = dict(type='dict'),
     ))
@@ -168,13 +181,18 @@ def run_module():
             if current_state == HOST_ABSENT:
                 allocate_host(one, module, resolved_params, result)
                 host = get_host_by_name(one, host_name)
+                wait_for_host_state(module, one, host, [HOST_STATES.MONITORED])
+            elif current_state in [HOST_STATES.ERROR, HOST_STATES.MONITORING_ERROR]:
+                module.fail_json(msg="invalid host state %s" % current_state_name)
 
         elif desired_state == 'enabled':
             if current_state == HOST_ABSENT:
                 allocate_host(one, module, resolved_params, result)
                 host = get_host_by_name(one, host_name)
+                wait_for_host_state(module, one, host, [HOST_STATES.MONITORED])
             elif current_state in [HOST_STATES.DISABLED, HOST_STATES.OFFLINE]:
                 if one.host.status(host.ID, HOST_STATUS.ENABLED):
+                    wait_for_host_state(module, one, host, [HOST_STATES.MONITORED])
                     result['changed'] = True
                 else:
                     module.fail_json(msg="could not enable host")
@@ -188,6 +206,7 @@ def run_module():
                 module.fail_json(msg='absent host cannot be put in disabled state')
             elif current_state in [HOST_STATES.MONITORED, HOST_STATES.OFFLINE]:
                 if one.host.status(host.ID, HOST_STATUS.DISABLED):
+                    wait_for_host_state(module, one, host, [HOST_STATES.DISABLED])
                     result['changed'] = True
                 else:
                     module.fail_json(msg="could not disable host")
@@ -201,6 +220,7 @@ def run_module():
                 module.fail_json(msg='absent host cannot be placed in offline state')
             elif current_state in [HOST_STATES.MONITORED, HOST_STATES.DISABLED]:
                 if one.host.status(host.ID, HOST_STATUS.OFFLINE):
+                    wait_for_host_state(module, one, host, [HOST_STATES.OFFLINE])
                     result['changed'] = True
                 else:
                     module.fail_json(msg="could not set host offline")
@@ -218,12 +238,12 @@ def run_module():
 
         # if we reach this point we can assume that the host was taken to the desired state
 
-        if desired_state != "offline":
+        if desired_state != "absent":
 
             # manipulate or modify the template
             desired_template_changes = resolved_params.get('template')
             if requires_template_update(host.TEMPLATE, desired_template_changes):
-                # setup the root element so that pytone will generate XML instead of attribute vector
+                # setup the root element so that pyone will generate XML instead of attribute vector
                 desired_template_changes = {"TEMPLATE": desired_template_changes}
                 if one.host.update(host.ID, desired_template_changes, 1):  # merge the template
                     result['changed'] = True
@@ -238,6 +258,7 @@ def run_module():
                     module.fail_json(msg="failed to update the host cluster")
 
         # return
+        close_one_server(one)
         module.exit_json(**result)
     except OneException as e:
         module.fail_json(msg="OpenNebula Exception: %s" % e)

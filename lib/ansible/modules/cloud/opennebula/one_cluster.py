@@ -11,7 +11,7 @@ ANSIBLE_METADATA = {
 
 DOCUMENTATION = '''
 ---
-module: opennebula_cluster
+module: one_cluster
 
 short_description: Manages OpenNebula Cluster
 
@@ -37,11 +37,11 @@ options:
 
 EXAMPLES = '''
 - name: Create a Cluster
-  opennebula_cluster:
+  one_cluster:
     name: cluster7
 
 - name: Create a Cluster and tune its template
-  opennebula_cluster:
+  one_cluster:
     name: cluster8
     template:
         LABELS:

@@ -11,7 +11,7 @@ ANSIBLE_METADATA = {
 
 DOCUMENTATION = '''
 ---
-module: opennebula_template
+module: one_template
 
 short_description: Manages OpenNebula Templates
 
@@ -42,7 +42,7 @@ options:
 
 EXAMPLES = '''
 - name: Create a VM Templates from a Market Appliance
-  opennebula_template:
+  one_template:
     name: Debian9
     marketapp_id: 18
 '''

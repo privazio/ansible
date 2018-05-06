@@ -4,6 +4,7 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 
+import time
 from os import environ
 from ssl import _create_unverified_context
 from six import string_types
@@ -12,13 +13,15 @@ HAS_PYONE = True
 
 try:
     import pyone
+    from pyone.tester import OneServerTester
 except ImportError:
     HAS_PYONE = False
 
 OPENNEBULA_COMMON_ARGS = dict(
-    endpoint = dict(type='str'),
-    session = dict(type='str', no_log=True),
+    endpoint=dict(type='str'),
+    session=dict(type='str', no_log=True),
     validate_certs=dict(default=True, type='bool'),
+    wait_timeout=dict(type='int', default=300),
 )
 
 
@@ -34,6 +37,11 @@ def create_one_server(module):
     endpoint = module.params.get("endpoint", environ.get("PYONE_ENDPOINT",False))
     session = module.params.get("session", environ.get("PYONE_SESSION",False))
 
+    test_fixture = (environ.get("PYONE_TEST_FIXTURE", "False").lower() in ["1", "yes", "true"])
+    test_fixture_file = environ.get("PYONE_TEST_FIXTURE_FILE", "undefined")
+    test_fixture_replay = (environ.get("PYONE_TEST_FIXTURE_REPLAY", "True").lower() in ["1","yes","true"])
+    test_fixture_unit = environ.get("PYONE_TEST_FIXTURE_UNIT", "init")
+
     # Check if the module can run
     if not HAS_PYONE:
         module.fail_json(msg="pyone is required for this module")
@@ -44,10 +52,32 @@ def create_one_server(module):
     if not session:
         module.fail_json(msg= "Either session or the environment vairable PYONE_SESSION must be provided")
 
-    if not module.params.get("validate_certs") and not "PYTHONHTTPSVERIFY" in environ:
-        return pyone.OneServer(endpoint, session=session, context=_create_unverified_context())
+    if not test_fixture:
+        if not module.params.get("validate_certs") and not "PYTHONHTTPSVERIFY" in environ:
+            return pyone.OneServer(endpoint, session=session, context=_create_unverified_context())
+        else:
+            return pyone.OneServer(endpoint, session)
     else:
-        return pyone.OneServer(endpoint,session)
+        if not module.params.get("validate_certs") and not "PYTHONHTTPSVERIFY" in environ:
+            one = OneServerTester(endpoint,
+                                   fixture_file=test_fixture_file,
+                                   fixture_replay=test_fixture_replay,
+                                   session=session,
+                                   context=_create_unverified_context())
+        else:
+            one = OneServerTester(endpoint,
+                                   fixture_file=test_fixture_file,
+                                   fixture_replay=test_fixture_replay,
+                                   session=session)
+        one.set_fixture_unit_test(test_fixture_unit)
+        return one
+
+def close_one_server(one):
+    """
+    Closing is only require in the event of fixture recording, as fixtures will be dumped to file
+    """
+    if environ.get("PYONE_TEST_FIXTURE", False):
+        one._close_fixtures()
 
 
 def get_host_by_name(one, name):
@@ -172,3 +202,45 @@ def resolve_parameters(one, module):
                 resolved_params['cluster_id'] = cluster.ID
 
     return resolved_params
+
+def wait_for_state(module, element_name, state, state_name, target_states, invalid_states=[],transition_states=None, wait_timeout=None):
+    '''
+
+    Args:
+        module: Ansible module in execution
+        element_name: the name of the object we are waiting for: HOST, VM, etc.
+        state: lambda that returns the current state, will be queried until target state is reached
+        state_name: lambda that returns the readable form of a given state
+        target_states: states expected to be reached
+        invalid_states: if any of this states is reached, fail
+        transition_states: when used, these are the valid states during the transition.
+        wait_timeout: timeout period in seconds. Defaults to the provided parameter.
+
+    '''
+
+    if not wait_timeout:
+        wait_timeout = module.params.get("wait_timeout")
+
+    if module.params.get('_test_fixture_replay'):
+        sleep_time_ms = 0.1
+    else:
+        sleep_time_ms = 1
+
+    start_time = time.time()
+
+    while (time.time() - start_time) < wait_timeout:
+        current_state = state()
+
+        if current_state in invalid_states:
+            module.fail_json(msg='invalid %s state %s' % (element_name, state_name(current_state)))
+
+        if transition_states:
+            if current_state not in transition_states:
+                module.fail_json(msg='invalid %s transition state %s' % (element_name, state_name(current_state)))
+
+        if current_state in target_states:
+            return True
+
+        time.sleep(sleep_time_ms)
+
+    module.fail_json(msg="Wait timeout has expired!")
