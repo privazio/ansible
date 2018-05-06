@@ -1,0 +1,116 @@
+# test code for the one_host module
+
+- name: copy fixtures to test host
+  copy:
+    src: testhost/tmp/opennebula-fixtures.json.gz
+    dest: /tmp
+  when:
+    - opennebula_test_fixture
+    - opennebula_test_fixture_replay
+
+- name: ensure the tests hosts are absent
+  one_host:
+    name: "{{ item }}"
+    state: absent
+    endpoint: "{{ opennebula_endpoint }}"
+    session: "{{ opennebula_session }}"
+    validate_certs: false
+  environment:
+    PYONE_TEST_FIXTURE: "{{ opennebula_test_fixture }}"
+    PYONE_TEST_FIXTURE_FILE: /tmp/opennebula-fixtures.json.gz
+    PYONE_TEST_FIXTURE_REPLAY: "{{ opennebula_test_fixture_replay }}"
+    PYONE_TEST_FIXTURE_UNIT: "test_01_{{ item }}"
+  with_items: "{{opennebula_test.hosts}}"
+  register: result
+
+- name: attempt to enable a host that does not exists
+  one_host:
+    name: badhost
+    state: enabled
+    endpoint: "{{ opennebula_endpoint }}"
+    session: "{{ opennebula_session }}"
+    validate_certs: false
+  environment:
+    PYONE_TEST_FIXTURE: "{{ opennebula_test_fixture }}"
+    PYONE_TEST_FIXTURE_FILE: /tmp/opennebula-fixtures.json.gz
+    PYONE_TEST_FIXTURE_REPLAY: "{{ opennebula_test_fixture_replay }}"
+    PYONE_TEST_FIXTURE_UNIT: test_02
+  ignore_errors: true
+  register: result
+
+- name: assert it failed
+  assert:
+    that:
+    - result is failed
+
+- name: delete an unexisting host
+  one_host:
+    name: badhost
+    state: absent
+    endpoint: "{{ opennebula_endpoint }}"
+    session: "{{ opennebula_session }}"
+    validate_certs: false
+  environment:
+    PYONE_TEST_FIXTURE: "{{ opennebula_test_fixture }}"
+    PYONE_TEST_FIXTURE_FILE: /tmp/opennebula-fixtures.json.gz
+    PYONE_TEST_FIXTURE_REPLAY: "{{ opennebula_test_fixture_replay }}"
+    PYONE_TEST_FIXTURE_UNIT: test_03
+  register: result
+
+- name: assert it worked
+  assert:
+    that:
+    - result is not failed
+
+- name: enable the test hosts
+  one_host:
+    name: "{{ item }}"
+    state: enabled
+    endpoint: "{{ opennebula_endpoint }}"
+    session: "{{ opennebula_session }}"
+    validate_certs: false
+  environment:
+    PYONE_TEST_FIXTURE: "{{ opennebula_test_fixture }}"
+    PYONE_TEST_FIXTURE_FILE: /tmp/opennebula-fixtures.json.gz
+    PYONE_TEST_FIXTURE_REPLAY: "{{ opennebula_test_fixture_replay }}"
+    PYONE_TEST_FIXTURE_UNIT: "test_04_{{ item }}"
+  with_items: "{{opennebula_test.hosts}}"
+  register: result
+
+- name: disable the test hosts
+  one_host:
+    name: "{{ item }}"
+    state: disabled
+    endpoint: "{{ opennebula_endpoint }}"
+    session: "{{ opennebula_session }}"
+    validate_certs: false
+  environment:
+    PYONE_TEST_FIXTURE: "{{ opennebula_test_fixture }}"
+    PYONE_TEST_FIXTURE_FILE: /tmp/opennebula-fixtures.json.gz
+    PYONE_TEST_FIXTURE_REPLAY: "{{ opennebula_test_fixture_replay }}"
+    PYONE_TEST_FIXTURE_UNIT: "test_05_{{ item }}"
+  with_items: "{{opennebula_test.hosts}}"
+  register: result
+
+- name: offline the test hosts
+  one_host:
+    name: "{{ item }}"
+    state: offline
+    endpoint: "{{ opennebula_endpoint }}"
+    session: "{{ opennebula_session }}"
+    validate_certs: false
+  environment:
+    PYONE_TEST_FIXTURE: "{{ opennebula_test_fixture }}"
+    PYONE_TEST_FIXTURE_FILE: /tmp/opennebula-fixtures.json.gz
+    PYONE_TEST_FIXTURE_REPLAY: "{{ opennebula_test_fixture_replay }}"
+    PYONE_TEST_FIXTURE_UNIT: "test_06_{{ item }}"
+  with_items: "{{opennebula_test.hosts}}"
+  register: result
+
+- name: fetch fixtures
+  fetch:
+    src: /tmp/opennebula-fixtures.json.gz
+    dest: targets/one_host/files
+  when:
+    - opennebula_test_fixture
+    - not opennebula_test_fixture_replay

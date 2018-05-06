@@ -1,0 +1,14 @@
+# This is the configuration template for ansible-test OpenNebula integration tests.
+#
+# You do not need this template if you are:
+#
+# 1) Running integration tests without using ansible-test.
+# 2) Running integration tests against previously recorded XMLRPC fixtures
+#
+# If you want to test against a Live OpenNebula platform,
+# fill in the values below and save this file without the .template extension.
+# This will cause ansible-test to use the given configuration instead of previosly recorded XMLRPC fixtures.
+#
+
+opennebula_endpoint: @ENDPOINT
+opennebula_session: @SESSION
